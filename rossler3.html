@@ -1,0 +1,1632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Rössler — a folded-band visualizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,500;12..96,700&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-deep: #06060d;
+    --bg-panel: rgba(13, 16, 28, 0.78);
+    --bg-panel-solid: #0d101c;
+    --border: rgba(0, 212, 255, 0.18);
+    --border-bright: rgba(0, 212, 255, 0.45);
+    --accent: #00d4ff;
+    --accent-warm: #ffb84d;
+    --accent-mag: #ff2d95;
+    --text: #e8eaf2;
+    --text-dim: #7a8095;
+    --text-faint: #4a4f60;
+    --grid: rgba(0, 212, 255, 0.08);
+    --danger: #ff5d6c;
+    --good: #3dff8a;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg-deep);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* radial vignette overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: radial-gradient(circle at 50% 45%, transparent 0%, rgba(0,0,0,0.55) 80%, rgba(0,0,0,0.85) 100%);
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  /* subtle grain — pointer-events:none is CRITICAL or it blocks clicks */
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='5'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    pointer-events: none !important;
+    opacity: 0.4;
+    z-index: 6;
+    mix-blend-mode: overlay;
+  }
+
+  /* defensive: ensure interactive panels accept events */
+  .panel, .readout, .legend, .btn, input, .esa-toggle {
+    pointer-events: auto;
+  }
+
+  #canvas3d {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+  }
+
+  /* === Title strip === */
+  .title-strip {
+    position: fixed;
+    top: 18px;
+    left: 24px;
+    z-index: 10;
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    pointer-events: none;
+  }
+  .title-strip .glyph {
+    font-family: 'Bricolage Grotesque', serif;
+    font-weight: 300;
+    font-size: 42px;
+    font-style: italic;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1;
+  }
+  .title-strip .glyph em {
+    color: var(--accent);
+    font-style: italic;
+    font-weight: 500;
+  }
+  .title-strip .sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding-bottom: 4px;
+  }
+
+  /* === panels === */
+  .panel {
+    position: fixed;
+    background: var(--bg-panel);
+    backdrop-filter: blur(18px) saturate(1.4);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    z-index: 10;
+    overflow: hidden;
+  }
+
+  .panel .ph {
+    padding: 10px 14px 8px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .panel .ph .ph-tag {
+    font-size: 9px;
+    color: var(--accent);
+    letter-spacing: 0.15em;
+  }
+
+  .panel .pb { padding: 14px; }
+
+  /* left panel: parameters */
+  .panel-params {
+    top: 90px;
+    left: 24px;
+    width: 280px;
+  }
+
+  .control {
+    margin-bottom: 14px;
+  }
+  .control:last-child { margin-bottom: 0; }
+  .control .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .control .lbl {
+    font-size: 11px;
+    color: var(--text);
+    letter-spacing: 0.05em;
+  }
+  .control .val {
+    font-size: 11px;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  .control .desc {
+    font-size: 10px;
+    color: var(--text-faint);
+    margin-top: 4px;
+    line-height: 1.5;
+    font-style: italic;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 8px;
+    background: linear-gradient(90deg, var(--border) 0%, var(--border-bright) 100%);
+    outline: none;
+    cursor: pointer;
+    border-radius: 0;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    background: var(--accent);
+    border: 2px solid var(--bg-deep);
+    border-radius: 0;
+    transform: rotate(45deg);
+    box-shadow: 0 0 12px var(--accent);
+    cursor: grab;
+  }
+  input[type="range"]::-webkit-slider-thumb:active {
+    cursor: grabbing;
+    background: var(--accent-mag);
+    box-shadow: 0 0 16px var(--accent-mag);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: var(--accent);
+    border: 2px solid var(--bg-deep);
+    border-radius: 0;
+    box-shadow: 0 0 12px var(--accent);
+    cursor: grab;
+  }
+
+  .equation {
+    background: rgba(0, 212, 255, 0.04);
+    border-left: 2px solid var(--accent);
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+  .equation .term {
+    transition: color 0.2s, opacity 0.2s;
+  }
+  .equation .term.killed {
+    color: var(--danger);
+    text-decoration: line-through;
+    opacity: 0.6;
+  }
+
+  /* esa panel */
+  .panel-esa {
+    top: 90px;
+    right: 24px;
+    width: 280px;
+  }
+  .esa-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  .esa-toggle:last-child { border-bottom: none; padding-bottom: 0; }
+  .esa-toggle:first-child { padding-top: 0; }
+  .esa-toggle .box {
+    width: 12px;
+    height: 12px;
+    border: 1px solid var(--border-bright);
+    flex-shrink: 0;
+    margin-top: 2px;
+    position: relative;
+    transition: all 0.15s;
+  }
+  .esa-toggle.active .box {
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+  .esa-toggle .lbl-esa {
+    font-size: 11px;
+    color: var(--text);
+    line-height: 1.4;
+  }
+  .esa-toggle .desc-esa {
+    font-size: 10px;
+    color: var(--text-faint);
+    line-height: 1.5;
+    margin-top: 3px;
+    font-style: italic;
+  }
+  .esa-toggle.active .lbl-esa { color: var(--accent); }
+
+  /* bottom: 2D projections */
+  .panel-projections {
+    bottom: 24px;
+    left: 24px;
+    width: 320px;
+  }
+  .proj-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+    padding: 10px;
+  }
+  .proj-cell {
+    aspect-ratio: 1;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--border);
+    position: relative;
+  }
+  .proj-cell canvas { width: 100%; height: 100%; display: block; }
+  .proj-cell .proj-lbl {
+    position: absolute;
+    top: 4px; left: 6px;
+    font-size: 9px;
+    color: var(--text-dim);
+    letter-spacing: 0.15em;
+  }
+
+  /* poincare panel */
+  .panel-poincare {
+    bottom: 24px;
+    right: 24px;
+    width: 280px;
+  }
+  .poincare-wrap {
+    padding: 10px;
+  }
+  #poincareCanvas {
+    width: 100%;
+    aspect-ratio: 1.2;
+    display: block;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid var(--border);
+  }
+  .poincare-meta {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+  .poincare-meta span:last-child { color: var(--accent); }
+
+  .poincare-controls {
+    padding: 10px 10px 6px;
+    border-top: 1px dashed var(--border);
+    margin-top: 6px;
+  }
+  .axis-buttons {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .axis-btn {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 0;
+    font-family: inherit;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .axis-btn:hover { border-color: var(--border-bright); color: var(--text); }
+  .axis-btn.active {
+    background: var(--accent);
+    color: var(--bg-deep);
+    border-color: var(--accent);
+    box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
+  }
+  .offset-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+    letter-spacing: 0.05em;
+  }
+  .offset-row .v-off {
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  #poincareOffset { height: 6px; }
+
+  /* readout strip */
+  .readout {
+    position: fixed;
+    top: 30px;
+    right: 24px;
+    z-index: 10;
+    display: flex;
+    gap: 24px;
+    background: var(--bg-panel);
+    backdrop-filter: blur(18px);
+    border: 1px solid var(--border);
+    padding: 8px 16px;
+    font-size: 10px;
+  }
+  .readout .item { display: flex; flex-direction: column; }
+  .readout .item .k { color: var(--text-dim); letter-spacing: 0.1em; text-transform: uppercase; font-size: 9px; }
+  .readout .item .v { color: var(--accent); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+  /* legend */
+  .legend {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex;
+    gap: 18px;
+    background: var(--bg-panel);
+    backdrop-filter: blur(18px);
+    border: 1px solid var(--border);
+    padding: 10px 16px;
+    font-size: 10px;
+  }
+  .legend .swatch {
+    display: inline-block;
+    width: 18px;
+    height: 2px;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .legend .item { color: var(--text-dim); }
+  .legend .item .l { color: var(--text); margin-left: 2px; }
+
+  /* buttons */
+  .btn {
+    background: transparent;
+    border: 1px solid var(--border-bright);
+    color: var(--accent);
+    padding: 6px 12px;
+    font-family: inherit;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn:hover {
+    background: var(--accent);
+    color: var(--bg-deep);
+    box-shadow: 0 0 12px rgba(0, 212, 255, 0.5);
+  }
+  .btn-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .btn-row .btn { flex: 1; }
+
+  /* citation footnote */
+  .footnote {
+    position: fixed;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 4;
+    font-size: 9px;
+    color: var(--text-faint);
+    letter-spacing: 0.1em;
+  }
+
+  /* responsive */
+  @media (max-width: 1100px) {
+    .panel { width: 240px !important; }
+    .legend { display: none; }
+  }
+  @media (max-width: 800px) {
+    .panel-params, .panel-esa { top: 70px; }
+    .panel-projections, .panel-poincare { display: none; }
+    .title-strip .glyph { font-size: 28px; }
+    .readout { gap: 12px; padding: 6px 10px; }
+  }
+</style>
+</head>
+<body>
+  <div id="canvas3d"></div>
+
+  <div class="title-strip">
+    <div class="glyph"><em>R</em>össler</div>
+    <div class="sub">a folded-band visualizer · ESA aligned</div>
+  </div>
+
+  <div class="readout">
+    <div class="item"><span class="k">t</span><span class="v" id="ro-t">0.00</span></div>
+    <div class="item"><span class="k">crossings</span><span class="v" id="ro-cross">0</span></div>
+    <div class="item"><span class="k">divergence</span><span class="v" id="ro-div">0.000</span></div>
+    <div class="item"><span class="k">regime</span><span class="v" id="ro-regime" style="color:var(--good)">bounded</span></div>
+  </div>
+
+  <!-- Parameters panel -->
+  <div class="panel panel-params">
+    <div class="ph">
+      <span>parameters</span>
+      <span class="ph-tag">Rössler 1976</span>
+    </div>
+    <div class="pb">
+      <div class="equation" id="eq">
+        <div><span class="term" id="t-x">ẋ = −y − z</span></div>
+        <div><span class="term" id="t-y">ẏ = x + a·y</span></div>
+        <div><span class="term" id="t-z">ż = b + z(x − c)</span></div>
+      </div>
+
+      <div class="control">
+        <div class="row"><span class="lbl">a</span><span class="val" id="va">0.200</span></div>
+        <input type="range" id="sa" min="0" max="0.5" step="0.001" value="0.2">
+        <div class="desc">y-coupling rate. Controls inward spiral speed.</div>
+      </div>
+      <div class="control">
+        <div class="row"><span class="lbl">b</span><span class="val" id="vb">0.200</span></div>
+        <input type="range" id="sb" min="0" max="1" step="0.001" value="0.2">
+        <div class="desc">z-injection. Without it, z collapses.</div>
+      </div>
+      <div class="control">
+        <div class="row"><span class="lbl">c</span><span class="val" id="vc">5.700</span></div>
+        <input type="range" id="sc" min="2" max="15" step="0.001" value="5.7">
+        <div class="desc">Reinjection threshold. Sets the fold.</div>
+      </div>
+      <div class="control">
+        <div class="row"><span class="lbl">speed</span><span class="val" id="vs">1.0×</span></div>
+        <input type="range" id="ss" min="0.1" max="3" step="0.05" value="1">
+      </div>
+
+      <div class="btn-row">
+        <button class="btn" id="btn-pause">pause</button>
+        <button class="btn" id="btn-reset">reset</button>
+        <button class="btn" id="btn-preset">classic</button>
+        <button class="btn" id="btn-focus">focus</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ESA panel -->
+  <div class="panel panel-esa">
+    <div class="ph">
+      <span>esa: constraint toggles</span>
+      <span class="ph-tag">break it to see it</span>
+    </div>
+    <div class="pb">
+      <div class="esa-toggle" id="esa-multi">
+        <div class="box"></div>
+        <div>
+          <div class="lbl-esa">multi-trajectory divergence</div>
+          <div class="desc-esa">Three near-identical seeds. Lyapunov sensitivity made visible.</div>
+        </div>
+      </div>
+      <div class="esa-toggle" id="esa-particles">
+        <div class="box"></div>
+        <div>
+          <div class="lbl-esa">shed particles from flow</div>
+          <div class="desc-esa">Volume contraction visualised as falling sparks.</div>
+        </div>
+      </div>
+      <div class="esa-toggle" id="esa-kill-y">
+        <div class="box"></div>
+        <div>
+          <div class="lbl-esa">kill y-coupling (a → 0)</div>
+          <div class="desc-esa">Strip the spiral. Constraint as generative.</div>
+        </div>
+      </div>
+      <div class="esa-toggle" id="esa-kill-b">
+        <div class="box"></div>
+        <div>
+          <div class="lbl-esa">kill z-injection (b → 0)</div>
+          <div class="desc-esa">Watch z drain. The fold needs the source.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2D projections + analytics -->
+  <div class="panel panel-projections">
+    <div class="ph">
+      <span>diagnostics</span>
+      <span class="ph-tag">spatial · analytical</span>
+    </div>
+    <div class="proj-grid">
+      <div class="proj-cell"><span class="proj-lbl">XY</span><canvas id="px"></canvas></div>
+      <div class="proj-cell"><span class="proj-lbl">XZ</span><canvas id="pxz"></canvas></div>
+      <div class="proj-cell"><span class="proj-lbl">YZ</span><canvas id="pyz"></canvas></div>
+      <div class="proj-cell"><span class="proj-lbl">‖V‖</span><canvas id="pvel"></canvas></div>
+      <div class="proj-cell"><span class="proj-lbl">FFT</span><canvas id="pfft"></canvas></div>
+      <div class="proj-cell"><span class="proj-lbl">RP</span><canvas id="prp"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Poincaré -->
+  <div class="panel panel-poincare">
+    <div class="ph">
+      <span>Poincaré section</span>
+      <span class="ph-tag" id="poincare-plane-tag">y = 0, ẏ &gt; 0</span>
+    </div>
+    <div class="poincare-wrap">
+      <canvas id="poincareCanvas"></canvas>
+      <div class="poincare-meta">
+        <span id="poincare-axes-label">x↔ z↑</span>
+        <span id="poincare-count">0 crossings</span>
+      </div>
+    </div>
+    <div class="poincare-controls">
+      <div class="axis-buttons">
+        <button class="axis-btn" data-ax="x">X</button>
+        <button class="axis-btn active" data-ax="y">Y</button>
+        <button class="axis-btn" data-ax="z">Z</button>
+      </div>
+      <div class="offset-row">
+        <span>plane offset</span>
+        <span class="v-off" id="poincareOffsetVal">0.00</span>
+      </div>
+      <input type="range" id="poincareOffset" min="-30" max="60" step="0.1" value="0">
+    </div>
+  </div>
+
+  <div class="legend">
+    <span class="item"><span class="swatch" style="background:linear-gradient(90deg,#00d4ff,#ff2d95)"></span><span class="l">trajectory α</span></span>
+    <span class="item"><span class="swatch" style="background:linear-gradient(90deg,#ff8a00,#ffe600)"></span><span class="l">trajectory β</span></span>
+    <span class="item"><span class="swatch" style="background:linear-gradient(90deg,#3dff8a,#00ffe0)"></span><span class="l">trajectory γ</span></span>
+  </div>
+
+  <div class="footnote">Rössler O.E. (1976) "An Equation for Continuous Chaos" · Physics Letters A 57(5)</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+/* ============================================================
+   ROSSLER ATTRACTOR VISUALIZER
+   ESA-aligned: rules exposed, constraints toggleable,
+   multiple substrates, empirical falsifier (Poincaré), bidirectional.
+   ============================================================ */
+
+// ---------- state ----------
+const state = {
+  a: 0.2, b: 0.2, c: 5.7,
+  speed: 1.0,
+  paused: false,
+  showMulti: true,
+  showParticles: true,
+  killY: false,
+  killB: false,
+  bloomOn: true,
+  t: 0,
+  crossings: 0,
+  divergenceCount: 0,
+  divergenceFlash: 0,    // decays each frame; > 0 means recent blow-up
+  poincareAxis: 'y',     // which Rössler axis the section plane is normal to
+  poincareOffset: 0,     // value on that axis defining the plane
+};
+
+// Trajectories escape to infinity outside the bounded-attractor regime
+// (e.g. a > ~0.43). Bound: any coord exceeding this triggers reset.
+// Kept tight (100) so divergent cycles stay within visible/fog-friendly scale —
+// you can still see the spiral form before each reset.
+const DIVERGENCE_BOUND = 100;
+
+// Three trajectories with near-identical seeds. They diverge under the flow.
+const SEEDS = [
+  { x: 0.10, y: 0.00, z: 0.00, color1: new THREE.Color(0x00d4ff), color2: new THREE.Color(0xff2d95) },
+  { x: 0.10, y: 0.00, z: 0.00001, color1: new THREE.Color(0xff8a00), color2: new THREE.Color(0xffe600) },
+  { x: 0.10, y: 0.00, z: 0.00002, color1: new THREE.Color(0x3dff8a), color2: new THREE.Color(0x00ffe0) },
+];
+
+const MAX_POINTS = 3500;    // points per trajectory (~12s of trail at default speed)
+const DT = 0.012;           // base integration step
+const SUBSTEPS_PER_FRAME = 4;
+
+// ---------- three.js setup ----------
+const container = document.getElementById('canvas3d');
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x06060d, 0.004);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 3000);
+camera.position.set(22, 14, 26);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x06060d, 1);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+container.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.target.set(0, 0, 4);
+controls.update();
+
+// post-processing
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  0.8, 0.5, 0.32  // strength, radius, threshold — calmer than the original 1.2 / 0.55 / 0.25
+);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+// reference grid (subtle) — repositioned each frame to track attractor floor
+const grid = new THREE.GridHelper(40, 40, 0x0a3045, 0x081822);
+grid.position.y = -8;
+grid.material.transparent = true;
+grid.material.opacity = 0.4;
+scene.add(grid);
+
+// ---------- auto-fit camera tracking ----------
+// Computes bounding box from recent trajectory points and gently lerps the
+// camera target toward the centroid. Camera distance only ENLARGES (never
+// shrinks) so the user can zoom in for detail without being fought.
+let userInteracting = false;
+controls.addEventListener('start', () => { userInteracting = true; });
+controls.addEventListener('end',   () => { userInteracting = false; });
+
+const _bounds = {
+  min: new THREE.Vector3(),
+  max: new THREE.Vector3(),
+  center: new THREE.Vector3(),
+  size: new THREE.Vector3(),
+  valid: false,
+};
+function computeAttractorBounds() {
+  // Use trajectory 0's recent points (last ~1500) to avoid initial-transient jitter
+  const tr = trajectories[0];
+  if (tr.count < 200) { _bounds.valid = false; return _bounds; }
+  const N = Math.min(tr.count, 1500);
+  const start = tr.count - N;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < N; i++) {
+    const idx = (start + i) * 3;
+    const px = tr.positions[idx], py = tr.positions[idx+1], pz = tr.positions[idx+2];
+    if (px < minX) minX = px; if (px > maxX) maxX = px;
+    if (py < minY) minY = py; if (py > maxY) maxY = py;
+    if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
+  }
+  _bounds.min.set(minX, minY, minZ);
+  _bounds.max.set(maxX, maxY, maxZ);
+  _bounds.center.set((minX+maxX)/2, (minY+maxY)/2, (minZ+maxZ)/2);
+  _bounds.size.set(maxX-minX, maxY-minY, maxZ-minZ);
+  _bounds.valid = true;
+  return _bounds;
+}
+
+function autoFitCamera() {
+  const b = computeAttractorBounds();
+  if (!b.valid) return;
+
+  // Lerp target toward centroid (always — works during user rotation)
+  controls.target.lerp(b.center, 0.025);
+
+  // Move grid to sit just below the attractor
+  const floorY = b.min.y - Math.max(2, b.size.y * 0.05);
+  grid.position.y += (floorY - grid.position.y) * 0.05;
+
+  // Distance: only ENLARGE if attractor outgrows view. Never pull camera in.
+  if (!userInteracting) {
+    const extent = Math.max(b.size.x, b.size.y, b.size.z);
+    // Cap at 280 — bound by DIVERGENCE_BOUND·~1.55 so we stay inside fog visibility
+    const desiredDist = Math.min(280, Math.max(18, extent * 1.55));
+    const dir = new THREE.Vector3().subVectors(camera.position, controls.target);
+    const currentDist = dir.length();
+    if (desiredDist > currentDist) {
+      dir.normalize();
+      const newDist = currentDist + (desiredDist - currentDist) * 0.04;
+      camera.position.copy(controls.target).addScaledVector(dir, newDist);
+    }
+  }
+}
+
+// Manual snap — used by the FOCUS button. Hard-aligns camera to ideal framing.
+function snapFocus() {
+  const b = computeAttractorBounds();
+  if (!b.valid || !isFinite(b.center.x + b.center.y + b.center.z)) {
+    // Bounds bad (mid-divergence). Reset trajectories and snap to origin.
+    trajectories.forEach((tr, i) => tr.reset(SEEDS[i]));
+    poincarePts.length = 0;
+    controls.target.set(0, 0, 4);
+    const dir = new THREE.Vector3(1, 0.6, 1).normalize();
+    camera.position.copy(controls.target).addScaledVector(dir, 35);
+    grid.position.y = -2;
+    console.log('[focus] bounds invalid — reset and snapped to origin');
+    return;
+  }
+  controls.target.copy(b.center);
+  const extent = Math.max(b.size.x, b.size.y, b.size.z);
+  // Cap distance — even at extreme params, never zoom further than 280
+  const desiredDist = Math.min(280, Math.max(18, extent * 1.55));
+  const dir = new THREE.Vector3().subVectors(camera.position, controls.target).normalize();
+  if (!isFinite(dir.x) || dir.lengthSq() < 0.0001) dir.set(1, 0.6, 1).normalize();
+  camera.position.copy(controls.target).addScaledVector(dir, desiredDist);
+  grid.position.y = b.min.y - Math.max(2, b.size.y * 0.05);
+  console.log(`[focus] center=(${b.center.x.toFixed(1)},${b.center.y.toFixed(1)},${b.center.z.toFixed(1)}) extent=${extent.toFixed(1)} dist=${desiredDist.toFixed(1)}`);
+}
+
+// thin axis indicators (very faint)
+function makeAxis(dir, color, len = 8) {
+  const geo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0,0,0),
+    dir.clone().multiplyScalar(len)
+  ]);
+  const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.15 });
+  return new THREE.Line(geo, mat);
+}
+scene.add(makeAxis(new THREE.Vector3(1,0,0), 0x224455));
+scene.add(makeAxis(new THREE.Vector3(0,1,0), 0x224455));
+scene.add(makeAxis(new THREE.Vector3(0,0,1), 0x224455));
+
+// ---------- rossler integrator (RK4) ----------
+function rosslerDeriv(p, a, b, c) {
+  // p = {x,y,z}. Returns {dx,dy,dz}.
+  const aEff = state.killY ? 0 : a;
+  const bEff = state.killB ? 0 : b;
+  return {
+    dx: -p.y - p.z,
+    dy: p.x + aEff * p.y,
+    dz: bEff + p.z * (p.x - c),
+  };
+}
+
+function rk4Step(p, dt, a, b, c) {
+  const k1 = rosslerDeriv(p, a, b, c);
+  const p2 = { x: p.x + 0.5*dt*k1.dx, y: p.y + 0.5*dt*k1.dy, z: p.z + 0.5*dt*k1.dz };
+  const k2 = rosslerDeriv(p2, a, b, c);
+  const p3 = { x: p.x + 0.5*dt*k2.dx, y: p.y + 0.5*dt*k2.dy, z: p.z + 0.5*dt*k2.dz };
+  const k3 = rosslerDeriv(p3, a, b, c);
+  const p4 = { x: p.x + dt*k3.dx, y: p.y + dt*k3.dy, z: p.z + dt*k3.dz };
+  const k4 = rosslerDeriv(p4, a, b, c);
+  return {
+    x: p.x + (dt/6)*(k1.dx + 2*k2.dx + 2*k3.dx + k4.dx),
+    y: p.y + (dt/6)*(k1.dy + 2*k2.dy + 2*k3.dy + k4.dy),
+    z: p.z + (dt/6)*(k1.dz + 2*k2.dz + 2*k3.dz + k4.dz),
+  };
+}
+
+// ---------- trajectory class ----------
+class Trajectory {
+  constructor(seed) {
+    this.seed = seed;
+    this.p = { x: seed.x, y: seed.y, z: seed.z };
+    this.pPrev = { ...this.p };
+    this.color1 = seed.color1;
+    this.color2 = seed.color2;
+    this.maxSpeedSeen = 1.0;
+
+    this.positions = new Float32Array(MAX_POINTS * 3);
+    this.colors = new Float32Array(MAX_POINTS * 3);
+    this.count = 0;
+
+    this.geom = new THREE.BufferGeometry();
+    this.geom.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
+    this.geom.setAttribute('color', new THREE.BufferAttribute(this.colors, 3));
+    this.geom.setDrawRange(0, 0);
+
+    this.mat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      linewidth: 1,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+    });
+    this.line = new THREE.Line(this.geom, this.mat);
+    scene.add(this.line);
+  }
+
+  reset(seed) {
+    this.p = { x: seed.x, y: seed.y, z: seed.z };
+    this.pPrev = { ...this.p };
+    this.count = 0;
+    this.geom.setDrawRange(0, 0);
+  }
+
+  step(dt, a, b, c) {
+    this.pPrev = { ...this.p };
+    const next = rk4Step(this.p, dt, a, b, c);
+
+    // Divergence guard — Rössler escapes to infinity outside the bounded regime
+    const ax = Math.abs(next.x), ay = Math.abs(next.y), az = Math.abs(next.z);
+    if (!isFinite(ax + ay + az) || ax > DIVERGENCE_BOUND || ay > DIVERGENCE_BOUND || az > DIVERGENCE_BOUND) {
+      this.reset(this.seed);
+      state.divergenceCount++;
+      state.divergenceFlash = 1.0;
+      return { speed: 0, dx: 0, dy: 0, dz: 0 };
+    }
+    this.p = next;
+
+    // velocity magnitude for color mapping
+    const dx = this.p.x - this.pPrev.x;
+    const dy = this.p.y - this.pPrev.y;
+    const dz = this.p.z - this.pPrev.z;
+    const speed = Math.sqrt(dx*dx + dy*dy + dz*dz) / dt;
+    if (speed > this.maxSpeedSeen) this.maxSpeedSeen = speed;
+    const t = Math.min(1, speed / Math.max(0.5, this.maxSpeedSeen * 0.7));
+
+    // gradient between color1 (slow) and color2 (fast)
+    const r = this.color1.r + (this.color2.r - this.color1.r) * t;
+    const g = this.color1.g + (this.color2.g - this.color1.g) * t;
+    const bb = this.color1.b + (this.color2.b - this.color1.b) * t;
+
+    if (this.count < MAX_POINTS) {
+      const i = this.count;
+      this.positions[i*3]   = this.p.x;
+      this.positions[i*3+1] = this.p.z;        // map z → up
+      this.positions[i*3+2] = this.p.y;
+      this.colors[i*3]   = r;
+      this.colors[i*3+1] = g;
+      this.colors[i*3+2] = bb;
+      this.count++;
+    } else {
+      // shift everything left by one (rolling buffer)
+      this.positions.copyWithin(0, 3);
+      this.colors.copyWithin(0, 3);
+      const i = MAX_POINTS - 1;
+      this.positions[i*3]   = this.p.x;
+      this.positions[i*3+1] = this.p.z;
+      this.positions[i*3+2] = this.p.y;
+      this.colors[i*3]   = r;
+      this.colors[i*3+1] = g;
+      this.colors[i*3+2] = bb;
+    }
+    this.geom.attributes.position.needsUpdate = true;
+    this.geom.attributes.color.needsUpdate = true;
+    this.geom.setDrawRange(0, this.count);
+
+    // recompute bounding sphere occasionally for frustum culling correctness
+    if (this.count % 200 === 0) this.geom.computeBoundingSphere();
+
+    return { speed, dx, dy, dz };
+  }
+}
+
+const trajectories = SEEDS.map(s => new Trajectory(s));
+
+// ---------- particle shed system ----------
+const PARTICLE_MAX = 800;
+class ParticleField {
+  constructor() {
+    this.positions = new Float32Array(PARTICLE_MAX * 3);
+    this.colors = new Float32Array(PARTICLE_MAX * 3);
+    this.sizes = new Float32Array(PARTICLE_MAX);
+    this.velocities = new Float32Array(PARTICLE_MAX * 3);
+    this.lifetimes = new Float32Array(PARTICLE_MAX);
+    this.maxLife = new Float32Array(PARTICLE_MAX);
+    this.cursor = 0;
+
+    this.geom = new THREE.BufferGeometry();
+    this.geom.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
+    this.geom.setAttribute('color', new THREE.BufferAttribute(this.colors, 3));
+    this.geom.setAttribute('size', new THREE.BufferAttribute(this.sizes, 1));
+
+    // simple round-sprite shader for soft glowing particles
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: { pixelRatio: { value: renderer.getPixelRatio() } },
+      vertexShader: `
+        attribute float size;
+        attribute vec3 color;
+        varying vec3 vColor;
+        varying float vAlpha;
+        uniform float pixelRatio;
+        void main() {
+          vColor = color;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = size * pixelRatio * (28.0 / -mv.z);
+          gl_Position = projectionMatrix * mv;
+          // Size is in pixel-magnitude units (peaks at PARTICLE_BASE_SIZE).
+          // Derive alpha from normalized lifetime (size / base).
+          vAlpha = clamp(size / 14.0, 0.0, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+        varying float vAlpha;
+        void main() {
+          vec2 d = gl_PointCoord - vec2(0.5);
+          float r = length(d);
+          if (r > 0.5) discard;
+          float a = smoothstep(0.5, 0.0, r) * vAlpha;
+          gl_FragColor = vec4(vColor * (0.6 + a*1.6), a);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.points = new THREE.Points(this.geom, this.mat);
+    scene.add(this.points);
+  }
+
+  spawn(x, y, z, vx, vy, vz, color) {
+    const i = this.cursor;
+    this.positions[i*3]   = x;
+    this.positions[i*3+1] = z;       // z is up
+    this.positions[i*3+2] = y;
+    // perpendicular kick + flow inheritance + downward bias
+    const kickStrength = 0.15;
+    const phi = Math.random() * Math.PI * 2;
+    const theta = Math.random() * Math.PI;
+    const kx = Math.sin(theta) * Math.cos(phi) * kickStrength;
+    const ky = Math.sin(theta) * Math.sin(phi) * kickStrength;
+    const kz = Math.cos(theta) * kickStrength;
+    this.velocities[i*3]   = vx * 0.3 + kx;
+    this.velocities[i*3+1] = vz * 0.3 + kz;   // up axis is z
+    this.velocities[i*3+2] = vy * 0.3 + ky;
+    this.colors[i*3]   = color.r;
+    this.colors[i*3+1] = color.g;
+    this.colors[i*3+2] = color.b;
+    this.sizes[i] = 14.0;
+    const life = 2.5 + Math.random() * 2.0;
+    this.maxLife[i] = life;
+    this.lifetimes[i] = life;
+    this.cursor = (this.cursor + 1) % PARTICLE_MAX;
+  }
+
+  update(dt) {
+    const gravity = -0.6;          // gentle pull "down"
+    const drag = 0.985;
+    for (let i = 0; i < PARTICLE_MAX; i++) {
+      if (this.lifetimes[i] <= 0) {
+        // drift them off-screen so they don't render
+        this.sizes[i] = 0;
+        continue;
+      }
+      this.lifetimes[i] -= dt;
+
+      this.velocities[i*3]   *= drag;
+      this.velocities[i*3+1] = this.velocities[i*3+1] * drag + gravity * dt;
+      this.velocities[i*3+2] *= drag;
+
+      this.positions[i*3]   += this.velocities[i*3]   * dt;
+      this.positions[i*3+1] += this.velocities[i*3+1] * dt;
+      this.positions[i*3+2] += this.velocities[i*3+2] * dt;
+
+      const lifeFrac = Math.max(0, this.lifetimes[i] / this.maxLife[i]);
+      this.sizes[i] = lifeFrac * 14.0;
+    }
+    this.geom.attributes.position.needsUpdate = true;
+    this.geom.attributes.color.needsUpdate = true;
+    this.geom.attributes.size.needsUpdate = true;
+  }
+
+  hide(hidden) { this.points.visible = !hidden; }
+}
+const particles = new ParticleField();
+
+// ---------- 2D projections (canvas) ----------
+const projDefs = [
+  { id: 'px',   ax: 'x', ay: 'y',  scale: 0.06 },
+  { id: 'pxz',  ax: 'x', ay: 'z',  scale: 0.06 },
+  { id: 'pyz',  ax: 'y', ay: 'z',  scale: 0.06 },
+  { id: 'pvel', ax: 't', ay: 'v',  scale: 0.04 },  // time vs |v|
+];
+const projCanvases = projDefs.map(d => {
+  const c = document.getElementById(d.id);
+  c.width = 200; c.height = 200;
+  return { ...d, c, ctx: c.getContext('2d') };
+});
+
+const velHistory = []; // for the velocity panel
+const VEL_HISTORY_LEN = 600;
+
+// ---------- FFT (radix-2 Cooley-Tukey, in-place) ----------
+// Standard iterative FFT. N must be a power of 2.
+function fft(re, im) {
+  const N = re.length;
+  // bit reversal
+  for (let i = 1, j = 0; i < N; i++) {
+    let bit = N >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      let t = re[i]; re[i] = re[j]; re[j] = t;
+      t = im[i]; im[i] = im[j]; im[j] = t;
+    }
+  }
+  // butterflies
+  for (let len = 2; len <= N; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wlRe = Math.cos(ang), wlIm = Math.sin(ang);
+    const half = len >> 1;
+    for (let i = 0; i < N; i += len) {
+      let wRe = 1, wIm = 0;
+      for (let k = 0; k < half; k++) {
+        const idx1 = i + k, idx2 = i + k + half;
+        const tRe = wRe * re[idx2] - wIm * im[idx2];
+        const tIm = wRe * im[idx2] + wIm * re[idx2];
+        re[idx2] = re[idx1] - tRe;
+        im[idx2] = im[idx1] - tIm;
+        re[idx1] = re[idx1] + tRe;
+        im[idx1] = im[idx1] + tIm;
+        const nRe = wRe * wlRe - wIm * wlIm;
+        const nIm = wRe * wlIm + wIm * wlRe;
+        wRe = nRe; wIm = nIm;
+      }
+    }
+  }
+}
+
+// ---------- power spectrum ----------
+const FFT_SIZE = 256;
+const xHistory = new Float32Array(FFT_SIZE);
+let xHistoryWrite = 0;
+let xHistoryFilled = false;
+const fftRe = new Float32Array(FFT_SIZE);
+const fftIm = new Float32Array(FFT_SIZE);
+const fftMag = new Float32Array(FFT_SIZE / 2);
+// Pre-compute Hann window
+const hannWin = new Float32Array(FFT_SIZE);
+for (let i = 0; i < FFT_SIZE; i++) {
+  hannWin[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (FFT_SIZE - 1)));
+}
+
+function pushXSample(x) {
+  xHistory[xHistoryWrite] = x;
+  xHistoryWrite = (xHistoryWrite + 1) % FFT_SIZE;
+  if (xHistoryWrite === 0) xHistoryFilled = true;
+}
+
+function computeSpectrum() {
+  if (!xHistoryFilled) return false;
+  // Copy windowed samples into fftRe (in correct chronological order)
+  let mean = 0;
+  for (let i = 0; i < FFT_SIZE; i++) mean += xHistory[i];
+  mean /= FFT_SIZE;
+  for (let i = 0; i < FFT_SIZE; i++) {
+    const idx = (xHistoryWrite + i) % FFT_SIZE;
+    fftRe[i] = (xHistory[idx] - mean) * hannWin[i];
+    fftIm[i] = 0;
+  }
+  fft(fftRe, fftIm);
+  // Magnitude (positive frequencies only)
+  for (let i = 0; i < FFT_SIZE / 2; i++) {
+    fftMag[i] = Math.sqrt(fftRe[i]*fftRe[i] + fftIm[i]*fftIm[i]);
+  }
+  return true;
+}
+
+let fftFrameCounter = 0;
+const pfftCanvas = document.getElementById('pfft');
+const pfftCtx = pfftCanvas.getContext('2d');
+pfftCanvas.width = 200; pfftCanvas.height = 200;
+
+function drawSpectrum() {
+  const w = pfftCanvas.width, h = pfftCanvas.height;
+  // fade trail (slower than projections — spectrum changes less often)
+  pfftCtx.fillStyle = 'rgba(6, 6, 13, 0.18)';
+  pfftCtx.fillRect(0, 0, w, h);
+
+  if (!xHistoryFilled) return;
+
+  // axis baseline
+  pfftCtx.strokeStyle = 'rgba(0, 212, 255, 0.08)';
+  pfftCtx.lineWidth = 1;
+  pfftCtx.beginPath();
+  pfftCtx.moveTo(0, h - 2); pfftCtx.lineTo(w, h - 2);
+  pfftCtx.stroke();
+
+  // Find max for normalization (skip DC bin)
+  let maxMag = 1e-6;
+  for (let i = 1; i < FFT_SIZE / 2; i++) if (fftMag[i] > maxMag) maxMag = fftMag[i];
+  const logMax = Math.log10(maxMag + 1);
+
+  // Filled curve in log scale
+  const grad = pfftCtx.createLinearGradient(0, 0, w, 0);
+  grad.addColorStop(0, 'rgba(0, 212, 255, 0.95)');
+  grad.addColorStop(0.5, 'rgba(255, 45, 149, 0.8)');
+  grad.addColorStop(1, 'rgba(255, 184, 77, 0.6)');
+
+  pfftCtx.fillStyle = grad;
+  pfftCtx.beginPath();
+  pfftCtx.moveTo(0, h);
+  const N = FFT_SIZE / 2 - 1;
+  for (let i = 1; i < FFT_SIZE / 2; i++) {
+    const x = ((i - 1) / N) * w;
+    const v = Math.log10(fftMag[i] + 1) / Math.max(logMax, 0.1);
+    const y = h - v * (h - 4);
+    pfftCtx.lineTo(x, y);
+  }
+  pfftCtx.lineTo(w, h);
+  pfftCtx.closePath();
+  pfftCtx.fill();
+
+  // Bright outline on top
+  pfftCtx.strokeStyle = 'rgba(232, 234, 242, 0.9)';
+  pfftCtx.lineWidth = 0.8;
+  pfftCtx.beginPath();
+  for (let i = 1; i < FFT_SIZE / 2; i++) {
+    const x = ((i - 1) / N) * w;
+    const v = Math.log10(fftMag[i] + 1) / Math.max(logMax, 0.1);
+    const y = h - v * (h - 4);
+    if (i === 1) pfftCtx.moveTo(x, y); else pfftCtx.lineTo(x, y);
+  }
+  pfftCtx.stroke();
+}
+
+// ---------- recurrence plot ----------
+const RP_SIZE = 96;                       // NxN matrix
+const rpBufX = new Float32Array(RP_SIZE);
+const rpBufY = new Float32Array(RP_SIZE);
+const rpBufZ = new Float32Array(RP_SIZE);
+let rpWrite = 0;
+let rpFilled = false;
+
+function pushRPSample(x, y, z) {
+  rpBufX[rpWrite] = x;
+  rpBufY[rpWrite] = y;
+  rpBufZ[rpWrite] = z;
+  rpWrite = (rpWrite + 1) % RP_SIZE;
+  if (rpWrite === 0) rpFilled = true;
+}
+
+const prpCanvas = document.getElementById('prp');
+const prpCtx = prpCanvas.getContext('2d');
+prpCanvas.width = RP_SIZE * 2; prpCanvas.height = RP_SIZE * 2;
+let rpImageData = prpCtx.createImageData(RP_SIZE, RP_SIZE);
+
+function drawRecurrencePlot() {
+  if (!rpFilled) {
+    prpCtx.fillStyle = 'rgba(6, 6, 13, 1)';
+    prpCtx.fillRect(0, 0, prpCanvas.width, prpCanvas.height);
+    return;
+  }
+
+  // Find max pairwise distance for normalization
+  let maxD2 = 0;
+  // Sample a subset to estimate scale (full would be O(N²) — RP_SIZE=96 → 9216 pairs, fine)
+  for (let i = 0; i < RP_SIZE; i++) {
+    for (let j = i + 1; j < RP_SIZE; j++) {
+      const ii = (rpWrite + i) % RP_SIZE;
+      const jj = (rpWrite + j) % RP_SIZE;
+      const dx = rpBufX[ii] - rpBufX[jj];
+      const dy = rpBufY[ii] - rpBufY[jj];
+      const dz = rpBufZ[ii] - rpBufZ[jj];
+      const d2 = dx*dx + dy*dy + dz*dz;
+      if (d2 > maxD2) maxD2 = d2;
+    }
+  }
+  const maxD = Math.sqrt(maxD2) || 1;
+  const threshold = maxD * 0.1;   // recurrence radius: ~10% of attractor diameter
+
+  // Fill image data
+  const data = rpImageData.data;
+  for (let i = 0; i < RP_SIZE; i++) {
+    const ii = (rpWrite + i) % RP_SIZE;
+    for (let j = 0; j < RP_SIZE; j++) {
+      const jj = (rpWrite + j) % RP_SIZE;
+      const dx = rpBufX[ii] - rpBufX[jj];
+      const dy = rpBufY[ii] - rpBufY[jj];
+      const dz = rpBufZ[ii] - rpBufZ[jj];
+      const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      // Continuous intensity rather than hard threshold — preserves more info
+      const t = Math.max(0, 1 - d / threshold);
+      const idx = (j * RP_SIZE + i) * 4;
+      // Cyan-magenta gradient on intensity
+      data[idx]   = (255 * t * t) | 0;          // R: rises with intensity
+      data[idx+1] = (212 * t) | 0;              // G: cyan-tint base
+      data[idx+2] = (255 * (0.3 + t * 0.7)) | 0;// B: always present
+      data[idx+3] = (255 * (0.15 + t * 0.85)) | 0;
+    }
+  }
+  prpCtx.putImageData(rpImageData, 0, 0);
+  // Scale up to canvas
+  prpCtx.imageSmoothingEnabled = false;
+  prpCtx.drawImage(prpCanvas, 0, 0, RP_SIZE, RP_SIZE,
+                              0, 0, prpCanvas.width, prpCanvas.height);
+}
+
+function drawProjections() {
+  for (const pj of projCanvases) {
+    const ctx = pj.ctx;
+    const w = pj.c.width, h = pj.c.height;
+    // fade trail
+    ctx.fillStyle = 'rgba(6, 6, 13, 0.06)';
+    ctx.fillRect(0, 0, w, h);
+
+    if (pj.ax === 't') {
+      // velocity-vs-time strip
+      ctx.strokeStyle = 'rgba(0, 212, 255, 0.6)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const len = velHistory.length;
+      for (let i = 0; i < len; i++) {
+        const x = (i / VEL_HISTORY_LEN) * w;
+        const y = h - Math.min(h, velHistory[i] * 8);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      continue;
+    }
+
+    // axis cross
+    ctx.strokeStyle = 'rgba(0, 212, 255, 0.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h);
+    ctx.moveTo(0, h/2); ctx.lineTo(w, h/2);
+    ctx.stroke();
+
+    // each trajectory's last few hundred points
+    for (let ti = 0; ti < trajectories.length; ti++) {
+      if (!state.showMulti && ti > 0) continue;
+      const tr = trajectories[ti];
+      const N = Math.min(tr.count, 1500);
+      const start = tr.count - N;
+      ctx.strokeStyle = `rgb(${(tr.color2.r*255)|0},${(tr.color2.g*255)|0},${(tr.color2.b*255)|0})`;
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      for (let i = 0; i < N; i++) {
+        const idx = start + i;
+        // remember: we stored (x, z, y) in positions buffer
+        const px = tr.positions[idx*3];
+        const pz = tr.positions[idx*3+1];
+        const py = tr.positions[idx*3+2];
+        let cx, cy;
+        if (pj.ax === 'x' && pj.ay === 'y') { cx = px; cy = py; }
+        else if (pj.ax === 'x' && pj.ay === 'z') { cx = px; cy = pz; }
+        else { cx = py; cy = pz; }  // y, z
+        const sx = w/2 + cx * w * pj.scale;
+        const sy = h/2 - cy * h * pj.scale;
+        if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+// ---------- Poincaré section ----------
+const poincareCanvas = document.getElementById('poincareCanvas');
+const pctx = poincareCanvas.getContext('2d');
+function resizePoincare() {
+  const r = poincareCanvas.getBoundingClientRect();
+  poincareCanvas.width = r.width * window.devicePixelRatio;
+  poincareCanvas.height = r.height * window.devicePixelRatio;
+}
+resizePoincare();
+const poincarePts = [];
+const POINCARE_MAX = 4000;
+
+function checkPoincare(tr, pPrev, pNew) {
+  // Generalized Poincaré section: ascending crossing of plane (axis = offset).
+  // The other two axes are recorded for plotting.
+  const axis = state.poincareAxis;
+  const off = state.poincareOffset;
+  const prev = pPrev[axis] - off;
+  const next = pNew[axis] - off;
+  if (prev < 0 && next >= 0) {
+    const denom = (next - prev);
+    if (Math.abs(denom) < 1e-12) return;
+    const frac = -prev / denom;
+    // Pick the two non-section axes for plot coordinates
+    let a1, a2;
+    if (axis === 'x')      { a1 = 'y'; a2 = 'z'; }
+    else if (axis === 'y') { a1 = 'x'; a2 = 'z'; }
+    else                   { a1 = 'x'; a2 = 'y'; }
+    const c1 = pPrev[a1] + frac * (pNew[a1] - pPrev[a1]);
+    const c2 = pPrev[a2] + frac * (pNew[a2] - pPrev[a2]);
+    poincarePts.push({ a: c1, b: c2, color: tr.color2 });
+    if (poincarePts.length > POINCARE_MAX) poincarePts.shift();
+    state.crossings++;
+  }
+}
+
+function drawPoincare() {
+  const w = poincareCanvas.width, h = poincareCanvas.height;
+  pctx.fillStyle = 'rgba(6, 6, 13, 0.04)';
+  pctx.fillRect(0, 0, w, h);
+
+  // axes cross
+  pctx.strokeStyle = 'rgba(0, 212, 255, 0.08)';
+  pctx.lineWidth = 1;
+  pctx.beginPath();
+  pctx.moveTo(w*0.1, h*0.5); pctx.lineTo(w*0.9, h*0.5);
+  pctx.moveTo(w*0.5, h*0.1); pctx.lineTo(w*0.5, h*0.9);
+  pctx.stroke();
+
+  // Auto-scale based on the spread of recent crossings, so the section
+  // adapts to whatever regime the user is currently in.
+  let maxA = 8, maxB = 8;
+  if (poincarePts.length > 5) {
+    let mA = 0, mB = 0;
+    for (const pt of poincarePts) {
+      const aa = Math.abs(pt.a), bb = Math.abs(pt.b);
+      if (aa > mA) mA = aa;
+      if (bb > mB) mB = bb;
+    }
+    maxA = Math.max(4, mA * 1.15);
+    maxB = Math.max(4, mB * 1.15);
+  }
+  const scaleA = (w * 0.42) / maxA;
+  const scaleB = (h * 0.42) / maxB;
+  const cx = w * 0.5;
+  const cy = h * 0.5;
+
+  for (const pt of poincarePts) {
+    const sx = cx + pt.a * scaleA;
+    const sy = cy - pt.b * scaleB;
+    pctx.fillStyle = `rgba(${(pt.color.r*255)|0},${(pt.color.g*255)|0},${(pt.color.b*255)|0},0.85)`;
+    pctx.beginPath();
+    pctx.arc(sx, sy, 1.4 * window.devicePixelRatio, 0, Math.PI*2);
+    pctx.fill();
+  }
+}
+
+// ---------- divergence between trajectories ----------
+function computeDivergence() {
+  if (trajectories.length < 2) return 0;
+  const a = trajectories[0].p;
+  const b = trajectories[1].p;
+  const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+  return Math.sqrt(dx*dx + dy*dy + dz*dz);
+}
+
+// ---------- UI wiring ----------
+const $ = id => document.getElementById(id);
+const sa = $('sa'), sb = $('sb'), sc = $('sc'), ss = $('ss');
+const va = $('va'), vb = $('vb'), vc = $('vc'), vs = $('vs');
+
+function updateValueDisplays() {
+  va.textContent = state.a.toFixed(3);
+  vb.textContent = state.b.toFixed(3);
+  vc.textContent = state.c.toFixed(3);
+  vs.textContent = state.speed.toFixed(2) + '×';
+}
+
+sa.addEventListener('input', e => { state.a = parseFloat(e.target.value); updateValueDisplays(); });
+sb.addEventListener('input', e => { state.b = parseFloat(e.target.value); updateValueDisplays(); });
+sc.addEventListener('input', e => { state.c = parseFloat(e.target.value); updateValueDisplays(); });
+ss.addEventListener('input', e => { state.speed = parseFloat(e.target.value); updateValueDisplays(); });
+
+// On slider release, reset trajectory so the new parameter regime is visible immediately.
+// Without this, parameter changes look gradual because the old trail is still showing.
+function resetOnRelease() {
+  trajectories.forEach((tr, i) => tr.reset(SEEDS[i]));
+  poincarePts.length = 0;
+  state.t = 0;
+  state.crossings = 0;
+  console.log(`[params] a=${state.a.toFixed(3)} b=${state.b.toFixed(3)} c=${state.c.toFixed(3)}`);
+}
+sa.addEventListener('change', resetOnRelease);
+sb.addEventListener('change', resetOnRelease);
+sc.addEventListener('change', resetOnRelease);
+
+$('btn-pause').addEventListener('click', e => {
+  state.paused = !state.paused;
+  e.target.textContent = state.paused ? 'play' : 'pause';
+});
+$('btn-reset').addEventListener('click', () => {
+  trajectories.forEach((tr, i) => tr.reset(SEEDS[i]));
+  poincarePts.length = 0;
+  state.t = 0;
+  state.crossings = 0;
+  state.divergenceCount = 0;
+  state.divergenceFlash = 0;
+  velHistory.length = 0;
+});
+$('btn-preset').addEventListener('click', () => {
+  state.a = 0.2; state.b = 0.2; state.c = 5.7;
+  sa.value = state.a; sb.value = state.b; sc.value = state.c;
+  updateValueDisplays();
+});
+$('btn-focus').addEventListener('click', () => {
+  snapFocus();
+});
+
+// ESA toggles
+function setupToggle(id, key, onChange) {
+  const el = $(id);
+  if (state[key]) el.classList.add('active');
+  el.addEventListener('click', () => {
+    state[key] = !state[key];
+    el.classList.toggle('active', state[key]);
+    console.log(`[esa] ${key} = ${state[key]}`);
+    if (onChange) onChange();
+  });
+}
+setupToggle('esa-multi', 'showMulti', () => {
+  // hide/show trajectories 2 and 3
+  trajectories[1].line.visible = state.showMulti;
+  trajectories[2].line.visible = state.showMulti;
+});
+setupToggle('esa-particles', 'showParticles', () => particles.hide(!state.showParticles));
+setupToggle('esa-kill-y', 'killY', () => {
+  $('t-y').classList.toggle('killed', state.killY);
+  // reset trajectories so the structural change is immediate, not gradual
+  trajectories.forEach((tr, i) => tr.reset(SEEDS[i]));
+  poincarePts.length = 0;
+  state.t = 0;
+  state.crossings = 0;
+});
+setupToggle('esa-kill-b', 'killB', () => {
+  $('t-z').classList.toggle('killed', state.killB);
+  trajectories.forEach((tr, i) => tr.reset(SEEDS[i]));
+  poincarePts.length = 0;
+  state.t = 0;
+  state.crossings = 0;
+});
+
+// ---------- Poincaré section controls ----------
+function updatePoincareLabels() {
+  const ax = state.poincareAxis;
+  const off = state.poincareOffset;
+  const dotMap = { x: 'ẋ', y: 'ẏ', z: 'ż' };
+  $('poincare-plane-tag').innerHTML = `${ax} = ${off.toFixed(1)}, ${dotMap[ax]} &gt; 0`;
+  // Plot axes label depends on which is the section axis
+  let h, v;
+  if (ax === 'x')      { h = 'y'; v = 'z'; }
+  else if (ax === 'y') { h = 'x'; v = 'z'; }
+  else                 { h = 'x'; v = 'y'; }
+  $('poincare-axes-label').textContent = `${h}↔ ${v}↑`;
+}
+
+document.querySelectorAll('.axis-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const ax = btn.dataset.ax;
+    state.poincareAxis = ax;
+    document.querySelectorAll('.axis-btn').forEach(b => b.classList.toggle('active', b.dataset.ax === ax));
+    poincarePts.length = 0;
+    state.crossings = 0;
+    updatePoincareLabels();
+    console.log(`[poincare] axis = ${ax}`);
+  });
+});
+
+const poincareOffsetInput = $('poincareOffset');
+poincareOffsetInput.addEventListener('input', e => {
+  state.poincareOffset = parseFloat(e.target.value);
+  $('poincareOffsetVal').textContent = state.poincareOffset.toFixed(2);
+  updatePoincareLabels();
+});
+poincareOffsetInput.addEventListener('change', () => {
+  // Reset accumulated points only on release — lets user scrub without losing all data instantly
+  poincarePts.length = 0;
+  state.crossings = 0;
+  console.log(`[poincare] offset = ${state.poincareOffset}`);
+});
+updatePoincareLabels();
+
+// initial activations
+['esa-multi','esa-particles'].forEach(id => $(id).classList.add('active'));
+
+// ---------- resize ----------
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
+  bloom.setSize(window.innerWidth, window.innerHeight);
+  resizePoincare();
+}
+window.addEventListener('resize', onResize);
+
+// ---------- main loop ----------
+let particleSpawnAccumulator = 0;
+const PARTICLE_SPAWN_RATE = 60;  // particles per second across all visible trajectories
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  autoFitCamera();
+
+  if (!state.paused) {
+    const dt = DT * state.speed;
+    for (let s = 0; s < SUBSTEPS_PER_FRAME; s++) {
+      for (let ti = 0; ti < trajectories.length; ti++) {
+        if (!state.showMulti && ti > 0) continue;
+        const tr = trajectories[ti];
+        const pBefore = { ...tr.p };
+        const stepInfo = tr.step(dt, state.a, state.b, state.c);
+        checkPoincare(tr, pBefore, tr.p);
+
+        // record velocity for the velocity panel (only first trajectory)
+        if (ti === 0) {
+          velHistory.push(stepInfo.speed);
+          if (velHistory.length > VEL_HISTORY_LEN) velHistory.shift();
+          // feed FFT and recurrence buffers — decimate to every 2nd substep
+          if ((s & 1) === 0) {
+            pushXSample(tr.p.x);
+            pushRPSample(tr.p.x, tr.p.y, tr.p.z);
+          }
+        }
+
+        // spawn shed particles probabilistically
+        if (state.showParticles && Math.random() < 0.18) {
+          particles.spawn(
+            tr.p.x, tr.p.y, tr.p.z,
+            stepInfo.dx / dt, stepInfo.dy / dt, stepInfo.dz / dt,
+            tr.color2
+          );
+        }
+      }
+      state.t += dt;
+    }
+    particles.update(dt * SUBSTEPS_PER_FRAME);
+  }
+
+  // readouts
+  $('ro-t').textContent = state.t.toFixed(2);
+  $('ro-cross').textContent = state.crossings.toString();
+  $('ro-div').textContent = computeDivergence().toFixed(3);
+  $('poincare-count').textContent = `${poincarePts.length} pts`;
+
+  // regime indicator: divergenceFlash decays each frame; > 0 means recent blow-up
+  if (state.divergenceFlash > 0) {
+    state.divergenceFlash = Math.max(0, state.divergenceFlash - 0.01);
+    const reg = $('ro-regime');
+    reg.textContent = `unbounded (${state.divergenceCount})`;
+    reg.style.color = 'var(--danger)';
+  } else if (state.divergenceCount > 0) {
+    // No recent flash but count > 0 — system stable now after past divergence
+    const reg = $('ro-regime');
+    reg.textContent = 'bounded';
+    reg.style.color = 'var(--good)';
+  }
+
+  drawProjections();
+  drawPoincare();
+
+  // Analytics — throttled. FFT every 4th frame, recurrence every 8th.
+  fftFrameCounter++;
+  if (fftFrameCounter % 4 === 0) {
+    if (computeSpectrum()) drawSpectrum();
+  }
+  if (fftFrameCounter % 8 === 0) {
+    drawRecurrencePlot();
+  }
+
+  composer.render();
+}
+
+updateValueDisplays();
+animate();
+
+// expose for console tinkering
+window.__rossler = { state, trajectories, particles };
+</script>
+</body>
+</html>
